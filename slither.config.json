@@ -1,0 +1,14 @@
+{
+  "filter_paths": "@openzeppelin|@layerzerolabs|contracts/mock|contracts/test",
+  "detectors_to_exclude": [
+    "calls-loop",
+    "events-access",
+    "events-maths",
+    "missing-zero-check",
+    "naming-convention",
+    "redundant-statements",
+    "reentrancy-events",
+    "solc-version",
+    "timestamp"
+  ]
+}

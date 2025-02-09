@@ -286,6 +286,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
             return false; // Not a contract
         }
 
+        // slither-disable-next-line low-level-calls
         (bool success, bytes memory data) = token.staticcall(
             abi.encodeWithSelector(IERC20.balanceOf.selector, address(this)) // Test with current contract address
         );
@@ -304,6 +305,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
             return false; // Not a contract
         }
 
+        // slither-disable-next-line low-level-calls
         (bool success, bytes memory data) = token.staticcall(
             abi.encodeWithSelector(IERC4626.convertToAssets.selector, uint256(1)) // Test with dummy value (1 share)
         );

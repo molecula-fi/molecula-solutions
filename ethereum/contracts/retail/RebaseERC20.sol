@@ -31,6 +31,7 @@ contract RebaseERC20 is IRebaseERC20, Ownable, IERC20Metadata, IERC20Errors, Zer
     string private _symbol;
 
     /// @dev Token decimals.
+    // slither-disable-next-line immutable-states
     uint8 private _decimals;
 
     /// @dev Oracle contract address.
