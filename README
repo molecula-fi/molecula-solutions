@@ -1,0 +1,7 @@
+# How to compile
+
+To compile files from ethereum and tron folders use the script:
+```
+SOLC_VERSION=0.8.28 find ethereum -name *.sol -type f -exec ls {} \; -exec solc {} $(cat remappings.txt) \;
+SOLC_VERSION=0.8.22 find tron     -name *.sol -type f -exec ls {} \; -exec solc {} $(cat remappings.txt) \;
+```
