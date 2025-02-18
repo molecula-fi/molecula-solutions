@@ -39,22 +39,22 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     using SafeERC20 for IERC20;
     using Address for address;
 
-    /// @dev Pool keeper address.
+    /// @dev Pool Keeper address.
     address public poolKeeper;
 
-    /// @dev Value to redeem.
-    uint256 public valueToRedeem;
+    /// @dev Value to redeem in the token amount for tokens from the supported pools.
+    mapping(address token => uint256 tokenValue) public valueToRedeem;
 
-    /// @dev List of ERC20 pools.
+    /// @dev List of the ERC20 pools.
     TokenParams[] public pools20;
 
-    /// @dev Mapping of ERC20 pools.
+    /// @dev Mapping of the ERC20 pools.
     mapping(address => TokenInfo) public pools20Map;
 
-    /// @dev List of ERC4626 pools.
+    /// @dev List of the ERC4626 pools.
     TokenParams[] public pools4626;
 
-    /// @dev Mapping of ERC20 pools.
+    /// @dev Mapping of the ERC20 pools.
     mapping(address => TokenInfo) public pools4626Map;
 
     /// @dev Supply Manager's address.
@@ -75,11 +75,17 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     /// @dev Error: Removed token does not have the zero balance.
     error ENotZeroBalanceOfRemovedToken();
 
+    /// @dev Error: Removed token does not have the zero `valueToRedeem`.
+    error ENotZeroValueToRedeemOfRemovedToken();
+
     /// @dev Error: Molecula Pool does not have the token.
     error ETokenNotExist();
 
-    /// @dev Emitted when the Molecula Pool is called by non-PoolKeeper.
+    /// @dev Emitted when the Molecula Pool is called by a non-PoolKeeper.
     error ENotMyPoolKeeper();
+
+    /// @dev No USDT in `pools20`.
+    error ENoUSDT();
 
     /**
      * @dev Throws an error if called with the wrong Supply Manager.
@@ -204,8 +210,42 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         uint256 length = pools4626.length;
         for (uint256 i = 0; i < length; i++) {
             uint256 balance = IERC4626(pools4626[i].pool).balanceOf(address(this));
-            balance = IERC4626(pools4626[i].pool).convertToAssets(balance);
-            res += _normalize(pools4626[i].n, balance);
+            if (balance > 0) {
+                balance = IERC4626(pools4626[i].pool).convertToAssets(balance);
+                res += _normalize(pools4626[i].n, balance);
+            }
+        }
+    }
+
+    /// @dev Returns the value to redeem in mUSD for the tokens from `pools4626`.
+    /// @return mUSDAmount Value to redeem in mUSD for the ERC4626 tokens.
+    function erc4626ValueToRedeem() public view returns (uint256 mUSDAmount) {
+        mUSDAmount = 0;
+        uint256 length = pools4626.length;
+        for (uint256 i = 0; i < length; ++i) {
+            address token = pools4626[i].pool;
+            // shares, e.g. sUSDe
+            uint256 shares = valueToRedeem[token];
+            if (shares > 0) {
+                // assets, e.g. USDe
+                uint256 assets = IERC4626(token).convertToAssets(shares);
+                mUSDAmount += _normalize(pools4626[i].n, assets);
+            }
+        }
+    }
+
+    /// @dev Returns value to redeem in mUSD for tokens from `pools20`.
+    /// @return mUSDAmount Value to redeem in mUSD for erc20 tokens.
+    function erc20ValueToRedeem() public view returns (uint256 mUSDAmount) {
+        mUSDAmount = 0;
+        uint256 length = pools20.length;
+        for (uint256 i = 0; i < length; ++i) {
+            address token = pools20[i].pool;
+            // value, e.g. USDT
+            uint256 value = valueToRedeem[token];
+            if (value > 0) {
+                mUSDAmount += _normalize(pools20[i].n, value);
+            }
         }
     }
 
@@ -213,15 +253,12 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
      * @inheritdoc IMoleculaPool
      */
     function totalSupply() public view returns (uint256 res) {
-        res = totalPools20Supply() + totalPools4626Supply() - valueToRedeem;
-    }
-
-    /**
-     * @dev Redeem tokens.
-     * @param requestIds Request IDs.
-     */
-    function redeem(uint256[] memory requestIds) external payable {
-        _redeem(requestIds);
+        uint256 supply = totalPools20Supply() + totalPools4626Supply();
+        uint256 redeemValue = erc20ValueToRedeem() + erc4626ValueToRedeem();
+        if (redeemValue > supply) {
+            return 0;
+        }
+        return supply - redeemValue;
     }
 
     /**
@@ -265,6 +302,9 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         uint256 balance = IERC20(token).balanceOf(address(this));
         if (balance > 0) {
             revert ENotZeroBalanceOfRemovedToken();
+        }
+        if (valueToRedeem[token] > 0) {
+            revert ENotZeroValueToRedeemOfRemovedToken();
         }
 
         uint32 i = poolsMap[token].arrayIndex;
@@ -414,25 +454,20 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     /// @inheritdoc IMoleculaPool
     function requestRedeem(
         address token,
-        uint256 value
-    ) external onlySupplyManager returns (uint256 formattedValue) {
+        uint256 value // In mUSD.
+    ) external onlySupplyManager returns (uint256 tokenValue) {
         if (pools20Map[token].exist) {
-            // We receive the value with 18 mUSD decimals.
+            // Convert the provided mUSD token value to the given token value (e.g. USDT).
+            tokenValue = _normalize(-pools20Map[token].n, value);
             // Must reduce the pool amount to correctly calculate `totalSupply` upon redemption.
-            valueToRedeem += value;
-
-            // Normalize tokens from 18 mUSD decimals to the ERC20 decimals.
-            // Return the value with token decimals for the future `transferFrom` call.
-            return _normalize(-pools20Map[token].n, value);
+            valueToRedeem[token] += tokenValue;
         } else if (pools4626Map[token].exist) {
-            // We receive the value with 18 mUSD decimals.
-            // Must reduce the pool amount to correctly calculate `totalSupply` upon redemption.
-            valueToRedeem += value;
-
-            // Normalize tokens from 18 mUSD decimals to the ERC20 decimals.
-            // Return the value converted to shares with token decimals for the future `transferFrom` call.
+            // Convert the provided mUSD token value to stable USD assets (e.g. USDe).
             uint256 assets = _normalize(-pools4626Map[token].n, value);
-            return IERC4626(token).convertToShares(assets);
+            // Convert stable USD assets (e.g. USDe) to the given token value (e.g. sUSDe).
+            tokenValue = IERC4626(token).convertToShares(assets);
+            // Must reduce the pool amount to correctly calculate `totalSupply` upon redemption.
+            valueToRedeem[token] += tokenValue;
         } else {
             revert ETokenNotExist();
         }
@@ -442,12 +477,13 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
      * @dev Redeem tokens.
      * @param requestIds Request IDs.
      */
-    function _redeem(uint256[] memory requestIds) internal virtual {
+    function redeem(uint256[] memory requestIds) external payable {
         if (requestIds.length == 0) {
             revert EEmptyArray();
         }
         // Call the Supply Manager's `redeem` method.
         // Receive the corresponding ERC20 token and total value redeemed.
+        // Note: `value` is in the token amount (e.g. sUSDe).
         // slither-disable-next-line reentrancy-benign
         (address token, uint256 value) = ISupplyManager(SUPPLY_MANAGER).redeem{value: msg.value}(
             address(this),
@@ -455,16 +491,9 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         );
 
         // Check if the token is in the `pools20Map` or `pools4626Map`.
-        if (pools20Map[token].exist) {
-            // Normalize the ERC20 token decimals to 18 mUSD decimals.
+        if (pools20Map[token].exist || pools4626Map[token].exist) {
             // Reduce the value to redeem for correct `totalSupply` calculation.
-            valueToRedeem -= _normalize(pools20Map[token].n, value);
-        } else if (pools4626Map[token].exist) {
-            // Normalize the ERC20 token decimals to 18 mUSD decimals.
-            // Reduce the value to redeem for correct `totalSupply` calculation.
-            // Ensure to convert the shares to assets.
-            uint256 shares = _normalize(pools4626Map[token].n, value);
-            valueToRedeem -= IERC4626(token).convertToAssets(shares);
+            valueToRedeem[token] -= value;
         } else {
             revert ENotERC20PoolToken();
         }
@@ -521,7 +550,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         address target,
         bytes memory data
     ) external payable onlyPoolKeeper returns (bytes memory result) {
-        // Decode function selector.
+        // Decode the function selector.
         bytes4 selector;
         // slither-disable-next-line assembly, solhint-disable-next-line no-inline-assembly
         assembly {
@@ -594,9 +623,6 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     function migrate(address oldMoleculaPool) external onlySupplyManager {
         MoleculaPoolTreasury oldMolPool = MoleculaPoolTreasury(payable(oldMoleculaPool));
 
-        // Update `valueToRedeem`.
-        valueToRedeem = oldMolPool.valueToRedeem();
-
         address oldPoolKeeper = oldMolPool.poolKeeper();
 
         // Check `pools20`.
@@ -621,6 +647,20 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
                 }
                 _transferAllBalance(IERC20(tokenParams.pool), oldPoolKeeper);
             }
+        }
+
+        // Update `valueToRedeem`.
+        address usdtAddress = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+        if (!pools20Map[usdtAddress].exist) {
+            revert ENoUSDT();
+        }
+        {
+            bytes memory payload = abi.encodeWithSignature("valueToRedeem()");
+            bytes memory result = oldMoleculaPool.functionStaticCall(payload);
+            // Get the old `valueToRedeem` in mUSD.
+            uint256 oldValueToRedeem = abi.decode(result, (uint256));
+            // Convert the value to the token amount in USDT.
+            valueToRedeem[usdtAddress] = oldValueToRedeem / 10 ** 12;
         }
 
         // Set Agents.
