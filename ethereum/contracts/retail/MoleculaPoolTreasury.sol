@@ -60,6 +60,9 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     /// @dev Supply Manager's address.
     address public immutable SUPPLY_MANAGER;
 
+    /// @dev USDT token address.
+    address public immutable USDT_ADDRESS;
+
     /// @dev Error: Not ERC20 token pool.
     error ENotERC20PoolToken();
 
@@ -145,7 +148,8 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         TokenParams[] memory p4626,
         address poolKeeperAddress,
         address supplyManagerAddress,
-        address[] memory whiteList
+        address[] memory whiteList,
+        address usdtAddress
     )
         Ownable(initialOwner)
         checkNotZero(initialOwner)
@@ -167,6 +171,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
             }
             isInWhiteList[whiteList[i]] = true;
         }
+        USDT_ADDRESS = usdtAddress;
     }
 
     /**
@@ -650,8 +655,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         }
 
         // Update `valueToRedeem`.
-        address usdtAddress = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
-        if (!pools20Map[usdtAddress].exist) {
+        if (!pools20Map[USDT_ADDRESS].exist) {
             revert ENoUSDT();
         }
         {
@@ -660,7 +664,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
             // Get the old `valueToRedeem` in mUSD.
             uint256 oldValueToRedeem = abi.decode(result, (uint256));
             // Convert the value to the token amount in USDT.
-            valueToRedeem[usdtAddress] = oldValueToRedeem / 10 ** 12;
+            valueToRedeem[USDT_ADDRESS] = oldValueToRedeem / 10 ** 12;
         }
 
         // Set Agents.
