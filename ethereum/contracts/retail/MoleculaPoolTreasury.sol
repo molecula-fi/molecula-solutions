@@ -26,7 +26,7 @@ struct TokenAndN {
  * @dev Token parameters.
  * @param token Token address.
  * @param n Normalization to 18 decimals: equal to the `18 - poolToken.decimals` value.
- * @param isERC4626 Is the `token` ERC-4626.
+ * @param isERC4626 Boolean indicating whether the token is of the ERC-4626 type.
  */
 struct TokenParams {
     address token;
@@ -36,7 +36,7 @@ struct TokenParams {
 
 enum TokenType {
     None,
-    ERC20, // it means just a pure ERC20, not an extension.
+    ERC20, // The value represents the ERC20 token type, not an extension.
     ERC4626
 }
 
@@ -62,7 +62,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     /// @dev Pool Keeper address.
     address public poolKeeper;
 
-    /// @dev Pool of the all supported tokens including ERC20 & ERC4626.
+    /// @dev Pool of all the supported tokens including the ones of the ERC20 and ERC4626 types.
     TokenParams[] public pool;
 
     /// @dev Mapping of the ERC20 pool.
@@ -74,7 +74,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     /// @dev USDT token address.
     address public immutable USDT_ADDRESS;
 
-    /// @dev White list of address callable by this contract.
+    /// @dev White list of addresses callable by this contract.
     mapping(address => bool) public isInWhiteList;
 
     /// @dev Error: Not ERC20 token pool.
@@ -149,7 +149,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
      * @param poolKeeperAddress Pool Keeper's address.
      * @param supplyManagerAddress Supply Manager's address.
      * @param whiteList List of whitelisted addresses.
-     * @param usdtAddress USDT token address required for a migration purpose.
+     * @param usdtAddress USDT token address required for migration.
      */
     constructor(
         address initialOwner,
@@ -198,11 +198,11 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         return result;
     }
 
-    /// @dev Convert token value (sUSDe, USDe, etc) to mUSDe.
+    /// @dev Convert the token value (sUSDe, USDe, etc) to mUSDe.
     /// @param value Token value.
     /// @param token Token address.
     /// @param n Normalization to 18 decimals: equal to the `18 - poolToken.decimals` value.
-    /// @param isERC4626 Is the `token` ERC-4626.
+    /// @param isERC4626 Boolean indicating whether the token is of the ERC-4626 type.
     /// @return mUSDAmount mUSD amount.
     function _tokenAmountTomUSD(
         uint256 value,
@@ -213,10 +213,10 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         mUSDAmount = 0;
         if (value > 0) {
             if (isERC4626) {
-                // Convert `value` to assets, e.g. mUSDe to USDe
+                // Convert `value` (e.g. mUSDe to USDe) to assets.
                 value = IERC4626(token).convertToAssets(value);
             }
-            // Note: `value` is in USD (USDT, USDe, etc)
+            // Note: `value` is in USD (e.g. USDT, USDe, etc).
             mUSDAmount = _normalize(n, value);
         }
     }
@@ -264,14 +264,14 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
      * @param n Decimal normalization.
      */
     function _addToken(address token, int8 n) internal {
-        // Ensure the token has `balanceOf()` function.
+        // Ensure that the token has the `balanceOf()` function.
         if (!_hasBalanceOf(token)) {
             revert ENotERC20PoolToken();
         }
 
         bool isERC4626 = _hasConvertToAssets(token);
 
-        // Ensure the token is not duplicated.
+        // Ensure that the token is not duplicated.
         if (poolMap[token].tokenType != TokenType.None) {
             revert EDuplicatedToken();
         }
@@ -317,7 +317,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
      * @return has True if the token has `balanceOf` function.
      */
     function _hasBalanceOf(address token) internal view returns (bool has) {
-        // Ensure the address is a contract before making a call
+        // Ensure that the address is a contract before making a call.
         if (token.code.length == 0) {
             return false; // Not a contract
         }
@@ -331,12 +331,12 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     }
 
     /**
-     * @dev Check if the token has `convertToAssets` function.
+     * @dev Check whether the token has the `convertToAssets` function.
      * @param token Token address.
-     * @return has True if the token has `convertToAssets` function.
+     * @return has Boolean indicating whether the token has the `convertToAssets` function.
      */
     function _hasConvertToAssets(address token) internal view returns (bool has) {
-        // Ensure the address is a contract before making a call
+        // Ensure that the address is a contract before making a call
         if (token.code.length == 0) {
             return false; // Not a contract
         }
@@ -442,18 +442,18 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
             requestIds
         );
 
-        // Check if the token is in the `poolMap`.
+        // Check whether the token is in `poolMap`.
         if (poolMap[token].tokenType == TokenType.None) {
             revert ETokenNotExist();
         }
 
-        // Reduce the value to redeem for correct `totalSupply` calculation.
+        // Reduce the value to redeem for the correct `totalSupply` calculation.
         poolMap[token].valueToRedeem -= value;
     }
 
     /**
-     * @dev Returns the list of ERC20 pool.
-     * @return result List of ERC20 pool.
+     * @dev Returns the list of the ERC20 pool.
+     * @return result List of the ERC20 pool.
      */
     function getTokenPool() external view returns (TokenParams[] memory result) {
         return pool;
@@ -493,7 +493,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
 
     /**
      * @dev Execute transactions on behalf of the whitelisted contract.
-     * Allows `approve` calls to tokens in `poolMap` and `poolMap` without whitelisting.
+     * Allows the `approve` calls to tokens in `poolMap` and `poolMap` without whitelisting.
      * @param target Address.
      * @param data Encoded function data.
      * @return result Result of the function call.
