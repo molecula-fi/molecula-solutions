@@ -727,13 +727,13 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     }
 
     /// @dev Pause the `execute` and `redeem` functions.
-    function pauseExecuteAndRedeem() external onlyAuthForPause {
+    function pauseAll() external onlyAuthForPause {
         _setExecutePaused(true);
         _setRedeemPaused(true);
     }
 
     /// @dev Unpause the `execute` and `redeem` functions.
-    function unpauseExecuteAndRedeem() external onlyOwner {
+    function unpauseAll() external onlyOwner {
         _setExecutePaused(false);
         _setRedeemPaused(false);
     }
