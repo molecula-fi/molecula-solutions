@@ -3,13 +3,14 @@
 pragma solidity ^0.8.28;
 
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
-import {IAgent} from "./interfaces/IAgent.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
-import {IMoleculaPool} from "./interfaces/IMoleculaPool.sol";
-import {ISupplyManager} from "./interfaces/ISupplyManager.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+import {IAgent} from "./interfaces/IAgent.sol";
+import {IMoleculaPool} from "./interfaces/IMoleculaPool.sol";
+import {ISupplyManager} from "./interfaces/ISupplyManager.sol";
 import {ZeroValueChecker} from "../common/ZeroValueChecker.sol";
 
 /**
@@ -42,13 +43,15 @@ enum TokenType {
 
 /**
  * @dev Token information.
- * @param exist Existence of the pool.
+ * @param tokenType Token type.
+ * @param isBlocked Flag indicating whether the token is blocked.
  * @param n Normalization to 18 decimals: equal to the `18 - poolToken.decimals` value.
  * @param arrayIndex Index in `TokenParams[] pool`.
  * @param valueToRedeem Value to redeem in the token amount.
  */
 struct TokenInfo {
     TokenType tokenType;
+    bool isBlocked;
     int8 n;
     uint32 arrayIndex;
     uint256 valueToRedeem;
@@ -59,8 +62,23 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     using SafeERC20 for IERC20;
     using Address for address;
 
-    /// @dev Pool Keeper address.
+    /// @dev Supply Manager's address.
+    address public immutable SUPPLY_MANAGER;
+
+    /// @dev USDT token's address.
+    address public immutable USDT_ADDRESS;
+
+    /// @dev Flag indicating whether the `redeem` function is paused.
+    bool public isRedeemPaused;
+
+    /// @dev Flag indicating whether the `execute` function is paused.
+    bool public isExecutePaused;
+
+    /// @dev Pool Keeper's address.
     address public poolKeeper;
+
+    /// @dev Account's address that can pause the `redeem` and `execute` functions.
+    address public guardian;
 
     /// @dev Pool of all the supported tokens including the ones of the ERC20 and ERC4626 types.
     TokenParams[] public pool;
@@ -68,14 +86,11 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     /// @dev Mapping of the ERC20 pool.
     mapping(address => TokenInfo) public poolMap;
 
-    /// @dev Supply Manager's address.
-    address public immutable SUPPLY_MANAGER;
-
-    /// @dev USDT token address.
-    address public immutable USDT_ADDRESS;
-
     /// @dev White list of addresses callable by this contract.
     mapping(address => bool) public isInWhiteList;
+
+    /// @dev Error: Not a smart-contract.
+    error ENotContract();
 
     /// @dev Error: Not ERC20 token pool.
     error ENotERC20PoolToken();
@@ -95,49 +110,64 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     /// @dev Error: Molecula Pool does not have the token.
     error ETokenNotExist();
 
-    /// @dev Emitted when the Molecula Pool is called by a non-PoolKeeper.
-    error ENotMyPoolKeeper();
+    /// @dev Error: The msg.sender is not authorized for some function.
+    error EBadSender();
 
-    /// @dev No USDT in `pools20`.
+    /// @dev Error: The `redeem` or `execute` function with the blocked token is called.
+    error ETokenBlocked();
+
+    /// @dev Error: No USDT in `pools20`.
     error ENoUSDT();
 
-    /// @dev Emitted when the target address is not in the white list.
+    /// @dev Error: The target address is not in the white list.
     error ENotInWhiteList();
 
-    /// @dev Emitted when the target address has already been added.
+    /// @dev Error: The target address has already been added.
     error EAlreadyAddedInWhiteList();
 
-    /// @dev Emitted when the target address has been deleted or hasn't been added yet.
+    /// @dev Error: The target address has been deleted or hasn't been added yet.
     error EAlreadyDeletedInWhiteList();
 
-    /**
-     * @dev Emitted when the target has been added in the white list.
-     * @param target Address.
-     */
+    /// @dev Error: The `execute` function is called while being paused as the `isExecutePaused` flag is set.
+    error EExecutePaused();
+
+    /// @dev Error: The `redeem` function is called while being paused as the `isRedeemPaused` flag is set.
+    error ERedeemPaused();
+
+    /// @dev Emitted when the target has been added in the white list.
+    /// @param target Address.
     event AddedInWhiteList(address indexed target);
 
-    /**
-     * @dev Emitted when the target has been deleted from the white list.
-     * @param target Address.
-     */
+    /// @dev Emitted when the target has been deleted from the white list.
+    /// @param target Address.
     event DeletedFromWhiteList(address indexed target);
 
-    /**
-     * @dev Throws an error if called with the wrong Supply Manager.
-     */
-    modifier onlySupplyManager() {
-        if (msg.sender != SUPPLY_MANAGER) {
-            revert ENotMySupplyManager();
+    /// @dev Emitted when the `isExecutePaused` flag is changed.
+    /// @param newValue New value.
+    event IsExecutePausedChanged(bool newValue);
+
+    /// @dev Emitted when the `isRedeemPaused` flag is changed.
+    /// @param newValue New value.
+    event IsRedeemPausedChanged(bool newValue);
+
+    /// @dev Emitted when `token` is blocked or unblocked.
+    /// @param token Token address.
+    /// @param isBlocked New token status.
+    event TokenBlockedChanged(address indexed token, bool isBlocked);
+
+    /// @dev Throws an error if called with the wrong sender.
+    /// @param expectedSender Expected sender.
+    modifier only(address expectedSender) {
+        if (msg.sender != expectedSender) {
+            revert EBadSender();
         }
         _;
     }
 
-    /**
-     * @dev Throws an error if called with the wrong PoolKeeper.
-     */
-    modifier onlyPoolKeeper() {
-        if (msg.sender != poolKeeper) {
-            revert ENotMyPoolKeeper();
+    /// @dev Check that `msg.sender` is the owner or guardian.
+    modifier onlyAuthForPause() {
+        if (msg.sender != owner() && msg.sender != guardian) {
+            revert EBadSender();
         }
         _;
     }
@@ -150,6 +180,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
      * @param supplyManagerAddress Supply Manager's address.
      * @param whiteList List of whitelisted addresses.
      * @param usdtAddress USDT token address required for migration.
+     * @param guardianAddress Guardian address that can pause the contract.
      */
     constructor(
         address initialOwner,
@@ -157,7 +188,8 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         address poolKeeperAddress,
         address supplyManagerAddress,
         address[] memory whiteList,
-        address usdtAddress
+        address usdtAddress,
+        address guardianAddress
     )
         Ownable(initialOwner)
         checkNotZero(initialOwner)
@@ -175,6 +207,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
             _addInWhiteList(whiteList[i]);
         }
         USDT_ADDRESS = usdtAddress;
+        guardian = guardianAddress;
     }
 
     /**
@@ -264,6 +297,11 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
      * @param n Decimal normalization.
      */
     function _addToken(address token, int8 n) internal {
+        // Ensure that the token is a contract before making a call.
+        if (token.code.length == 0) {
+            revert ENotContract();
+        }
+
         // Ensure that the token has the `balanceOf()` function.
         if (!_hasBalanceOf(token)) {
             revert ENotERC20PoolToken();
@@ -282,7 +320,8 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
             tokenType: isERC4626 ? TokenType.ERC4626 : TokenType.ERC20,
             n: n,
             arrayIndex: uint32(pool.length - 1),
-            valueToRedeem: 0
+            valueToRedeem: 0,
+            isBlocked: false
         });
     }
 
@@ -317,11 +356,6 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
      * @return has True if the token has `balanceOf` function.
      */
     function _hasBalanceOf(address token) internal view returns (bool has) {
-        // Ensure that the address is a contract before making a call.
-        if (token.code.length == 0) {
-            return false; // Not a contract
-        }
-
         // slither-disable-next-line low-level-calls
         (bool success, bytes memory data) = token.staticcall(
             abi.encodeWithSelector(IERC20.balanceOf.selector, address(this)) // Test with current contract address
@@ -336,11 +370,6 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
      * @return has Boolean indicating whether the token has the `convertToAssets` function.
      */
     function _hasConvertToAssets(address token) internal view returns (bool has) {
-        // Ensure that the address is a contract before making a call
-        if (token.code.length == 0) {
-            return false; // Not a contract
-        }
-
         // slither-disable-next-line low-level-calls
         (bool success, bytes memory data) = token.staticcall(
             abi.encodeWithSelector(IERC4626.convertToAssets.selector, uint256(1)) // Test with dummy value (1 share)
@@ -384,7 +413,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         uint256 requestId,
         address from,
         uint256 value
-    ) external onlySupplyManager returns (uint256 formattedValue) {
+    ) external only(SUPPLY_MANAGER) returns (uint256 formattedValue) {
         requestId;
         if (poolMap[token].tokenType == TokenType.None) {
             revert ETokenNotExist();
@@ -405,7 +434,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     function requestRedeem(
         address token,
         uint256 value // In mUSD.
-    ) external onlySupplyManager returns (uint256 tokenValue) {
+    ) external only(SUPPLY_MANAGER) returns (uint256 tokenValue) {
         if (poolMap[token].tokenType == TokenType.None) {
             revert ETokenNotExist();
         }
@@ -430,6 +459,10 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
      * @param requestIds Request IDs.
      */
     function redeem(uint256[] memory requestIds) external payable {
+        if (isRedeemPaused) {
+            revert ERedeemPaused();
+        }
+
         if (requestIds.length == 0) {
             revert EEmptyArray();
         }
@@ -445,6 +478,10 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         // Check whether the token is in `poolMap`.
         if (poolMap[token].tokenType == TokenType.None) {
             revert ETokenNotExist();
+        }
+
+        if (poolMap[token].isBlocked) {
+            revert ETokenBlocked();
         }
 
         // Reduce the value to redeem for the correct `totalSupply` calculation.
@@ -501,7 +538,14 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     function execute(
         address target,
         bytes memory data
-    ) external payable onlyPoolKeeper returns (bytes memory result) {
+    ) external payable only(poolKeeper) returns (bytes memory result) {
+        if (isExecutePaused) {
+            revert EExecutePaused();
+        }
+        if (poolMap[target].isBlocked) {
+            revert ETokenBlocked();
+        }
+
         // Decode the function selector.
         bytes4 selector;
         // slither-disable-next-line assembly, solhint-disable-next-line no-inline-assembly
@@ -556,7 +600,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     }
 
     /// @inheritdoc IMoleculaPool
-    function setAgent(address agent, bool auth) external onlySupplyManager {
+    function setAgent(address agent, bool auth) external only(SUPPLY_MANAGER) {
         _setAgent(agent, auth);
     }
 
@@ -580,7 +624,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     }
 
     /// @inheritdoc IMoleculaPool
-    function migrate(address oldMoleculaPool) external onlySupplyManager {
+    function migrate(address oldMoleculaPool) external only(SUPPLY_MANAGER) {
         MoleculaPoolTreasury oldMolPool = MoleculaPoolTreasury(payable(oldMoleculaPool));
 
         address oldPoolKeeper = oldMolPool.poolKeeper();
@@ -635,6 +679,77 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
             for (uint256 i = 0; i < agents.length; ++i) {
                 _setAgent(agents[i], true);
             }
+        }
+    }
+
+    /// @dev Change the guardian address.
+    /// @param newGuardian New guardian address.
+    function changeGuardian(address newGuardian) external onlyOwner checkNotZero(newGuardian) {
+        guardian = newGuardian;
+    }
+
+    /// @dev Set new value for the `isExecutePaused` flag.
+    /// @param newValue New value.
+    function _setExecutePaused(bool newValue) private {
+        if (isExecutePaused != newValue) {
+            isExecutePaused = newValue;
+            emit IsExecutePausedChanged(newValue);
+        }
+    }
+
+    /// @dev Set new value for the `isRedeemPaused` flag.
+    /// @param newValue New value.
+    function _setRedeemPaused(bool newValue) private {
+        if (isRedeemPaused != newValue) {
+            isRedeemPaused = newValue;
+            emit IsRedeemPausedChanged(newValue);
+        }
+    }
+
+    /// @dev Pause the `execute` function.
+    function pauseExecute() external onlyAuthForPause {
+        _setExecutePaused(true);
+    }
+
+    /// @dev Unpause the `execute` function.
+    function unpauseExecute() external onlyOwner {
+        _setExecutePaused(false);
+    }
+
+    /// @dev Pause the `redeem` function.
+    function pauseRedeem() external onlyAuthForPause {
+        _setRedeemPaused(true);
+    }
+
+    /// @dev Unpause the `redeem` function.
+    function unpauseRedeem() external onlyOwner {
+        _setRedeemPaused(false);
+    }
+
+    /// @dev Pause the `execute` and `redeem` functions.
+    function pauseExecuteAndRedeem() external onlyAuthForPause {
+        _setExecutePaused(true);
+        _setRedeemPaused(true);
+    }
+
+    /// @dev Unpause the `execute` and `redeem` functions.
+    function unpauseExecuteAndRedeem() external onlyOwner {
+        _setExecutePaused(false);
+        _setRedeemPaused(false);
+    }
+
+    /// @dev Block & unblock the `execute` and `redeem` operations with the token from the pool.
+    /// @param token Token address.
+    /// @param isBlocked Boolean flag indicating whether the token is blocked.
+    function setBlockToken(address token, bool isBlocked) external onlyOwner {
+        TokenInfo storage tokenInfo = poolMap[token];
+        if (tokenInfo.tokenType == TokenType.None) {
+            revert ETokenNotExist();
+        }
+
+        if (tokenInfo.isBlocked != isBlocked) {
+            tokenInfo.isBlocked = isBlocked;
+            emit TokenBlockedChanged(token, isBlocked);
         }
     }
 }
