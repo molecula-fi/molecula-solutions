@@ -684,7 +684,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
 
     /// @dev Change the guardian address.
     /// @param newGuardian New guardian address.
-    function changeGuardian(address newGuardian) external onlyOwner {
+    function changeGuardian(address newGuardian) external onlyOwner checkNotZero(newGuardian) {
         guardian = newGuardian;
     }
 
@@ -693,7 +693,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     function _setExecutePaused(bool newValue) private {
         if (isExecutePaused != newValue) {
             isExecutePaused = newValue;
-            emit IsExecutePausedChanged(isExecutePaused);
+            emit IsExecutePausedChanged(newValue);
         }
     }
 
@@ -702,7 +702,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     function _setRedeemPaused(bool newValue) private {
         if (isRedeemPaused != newValue) {
             isRedeemPaused = newValue;
-            emit IsRedeemPausedChanged(isRedeemPaused);
+            emit IsRedeemPausedChanged(newValue);
         }
     }
 
