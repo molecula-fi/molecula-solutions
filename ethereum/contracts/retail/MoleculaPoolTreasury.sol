@@ -195,6 +195,8 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         checkNotZero(initialOwner)
         checkNotZero(poolKeeperAddress)
         checkNotZero(supplyManagerAddress)
+        checkNotZero(usdtAddress)
+        checkNotZero(guardianAddress)
     {
         for (uint256 i = 0; i < tokens.length; ++i) {
             TokenAndN memory tokenAndN = tokens[i];
