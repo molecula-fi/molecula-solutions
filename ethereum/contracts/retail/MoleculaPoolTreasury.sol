@@ -3,6 +3,7 @@
 pragma solidity ^0.8.28;
 
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -12,16 +13,6 @@ import {IAgent} from "./interfaces/IAgent.sol";
 import {IMoleculaPool} from "./interfaces/IMoleculaPool.sol";
 import {ISupplyManager} from "./interfaces/ISupplyManager.sol";
 import {ZeroValueChecker} from "../common/ZeroValueChecker.sol";
-
-/**
- * @dev Token parameters.
- * @param token Token address.
- * @param n Normalization to 18 decimals: equal to the `18 - poolToken.decimals` value.
- */
-struct TokenAndN {
-    address token;
-    int8 n;
-}
 
 /**
  * @dev Token parameters.
@@ -184,7 +175,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
      */
     constructor(
         address initialOwner,
-        TokenAndN[] memory tokens,
+        address[] memory tokens,
         address poolKeeperAddress,
         address supplyManagerAddress,
         address[] memory whiteList,
@@ -199,8 +190,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         checkNotZero(guardianAddress)
     {
         for (uint256 i = 0; i < tokens.length; ++i) {
-            TokenAndN memory tokenAndN = tokens[i];
-            _addToken(tokenAndN.token, tokenAndN.n);
+            _addToken(tokens[i]);
         }
         poolKeeper = poolKeeperAddress;
         SUPPLY_MANAGER = supplyManagerAddress;
@@ -296,9 +286,8 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     /**
      * @dev Add the token to the pool.
      * @param token ERC20 token address.
-     * @param n Decimal normalization.
      */
-    function _addToken(address token, int8 n) internal {
+    function _addToken(address token) internal {
         // Ensure that the token is a contract before making a call.
         if (token.code.length == 0) {
             revert ENotContract();
@@ -317,6 +306,8 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         }
 
         // Add the token to the pool.
+        uint8 decimals = IERC20Metadata(token).decimals();
+        int8 n = 18 - int8(decimals);
         pool.push(TokenParams(token, n, isERC4626));
         poolMap[token] = TokenInfo({
             tokenType: isERC4626 ? TokenType.ERC4626 : TokenType.ERC20,
@@ -383,10 +374,9 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     /**
      * @dev Add the token to the pool.
      * @param token ERC20 token address.
-     * @param n Decimal normalization.
      */
-    function addToken(address token, int8 n) external onlyOwner {
-        _addToken(token, n);
+    function addToken(address token) external onlyOwner {
+        _addToken(token);
     }
 
     /**
@@ -640,7 +630,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
             for (uint256 i = 0; i < pools20.length; ++i) {
                 OldTokenParams memory tokenParams = pools20[i];
                 if (poolMap[tokenParams.pool].tokenType == TokenType.None) {
-                    _addToken(tokenParams.pool, tokenParams.n);
+                    _addToken(tokenParams.pool);
                 }
                 _transferAllBalance(IERC20(tokenParams.pool), oldPoolKeeper);
             }
@@ -655,7 +645,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
             for (uint256 i = 0; i < pools4626.length; ++i) {
                 OldTokenParams memory tokenParams = pools4626[i];
                 if (poolMap[tokenParams.pool].tokenType == TokenType.None) {
-                    _addToken(tokenParams.pool, tokenParams.n);
+                    _addToken(tokenParams.pool);
                 }
                 _transferAllBalance(IERC20(tokenParams.pool), oldPoolKeeper);
             }
