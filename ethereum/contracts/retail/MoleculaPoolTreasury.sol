@@ -610,7 +610,7 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
 
     /// @inheritdoc IMoleculaPool
     function migrate(address oldMoleculaPool) external only(SUPPLY_MANAGER) {
-        // Get the old pool keeper address.
+        // Get the old Pool Keeper's address.
         address oldPoolKeeper = MoleculaPoolTreasury(payable(oldMoleculaPool)).poolKeeper();
 
         // Ensure there are no unprocessed redeem requests to migrate.
@@ -620,8 +620,8 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
             );
             // Get the old `valueToRedeem` in mUSD.
             uint256 oldValueToRedeem = abi.decode(result, (uint256));
-            // Check if the old `valueToRedeem` is greater than or equal to 0.5 mUSD, because
-            // it's a current minimum redeem amount with a "share" price greater or equal to 1 USD.
+            // Check whether the old `valueToRedeem` value is greater than or equal to 0.5 mUSD,
+            // As it's the current minimum redeem amount with the share price greater than or equal to 1 USD.
             uint256 minRedeemValue = 0.5 * 10 ** 18; // >= 0.5 mUSD
             if (oldValueToRedeem >= minRedeemValue) {
                 revert EUnprocessedRedeemRequests();
