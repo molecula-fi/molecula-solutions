@@ -56,9 +56,6 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     /// @dev Supply Manager's address.
     address public immutable SUPPLY_MANAGER;
 
-    /// @dev USDT token's address.
-    address public immutable USDT_ADDRESS;
-
     /// @dev Flag indicating whether the `redeem` function is paused.
     bool public isRedeemPaused;
 
@@ -107,9 +104,6 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
     /// @dev Error: The `redeem` or `execute` function with the blocked token is called.
     error ETokenBlocked();
 
-    /// @dev Error: No USDT in `pools20`.
-    error ENoUSDT();
-
     /// @dev Error: The target address is not in the white list.
     error ENotInWhiteList();
 
@@ -124,6 +118,9 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
 
     /// @dev Error: The `redeem` function is called while being paused as the `isRedeemPaused` flag is set.
     error ERedeemPaused();
+
+    /// @dev Error: There are unprocessed redeem requests.
+    error EUnprocessedRedeemRequests();
 
     /// @dev Emitted when the target has been added in the white list.
     /// @param target Address.
@@ -170,7 +167,6 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
      * @param poolKeeperAddress Pool Keeper's address.
      * @param supplyManagerAddress Supply Manager's address.
      * @param whiteList List of whitelisted addresses.
-     * @param usdtAddress USDT token address required for migration.
      * @param guardianAddress Guardian address that can pause the contract.
      */
     constructor(
@@ -179,14 +175,12 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         address poolKeeperAddress,
         address supplyManagerAddress,
         address[] memory whiteList,
-        address usdtAddress,
         address guardianAddress
     )
         Ownable(initialOwner)
         checkNotZero(initialOwner)
         checkNotZero(poolKeeperAddress)
         checkNotZero(supplyManagerAddress)
-        checkNotZero(usdtAddress)
         checkNotZero(guardianAddress)
     {
         for (uint256 i = 0; i < tokens.length; ++i) {
@@ -198,7 +192,6 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
         for (uint256 i = 0; i < whiteList.length; ++i) {
             _addInWhiteList(whiteList[i]);
         }
-        USDT_ADDRESS = usdtAddress;
         guardian = guardianAddress;
     }
 
@@ -617,9 +610,23 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
 
     /// @inheritdoc IMoleculaPool
     function migrate(address oldMoleculaPool) external only(SUPPLY_MANAGER) {
-        MoleculaPoolTreasury oldMolPool = MoleculaPoolTreasury(payable(oldMoleculaPool));
+        // Get the old pool keeper address.
+        address oldPoolKeeper = MoleculaPoolTreasury(payable(oldMoleculaPool)).poolKeeper();
 
-        address oldPoolKeeper = oldMolPool.poolKeeper();
+        // Ensure there are no unprocessed redeem requests to migrate.
+        {
+            bytes memory result = oldMoleculaPool.functionStaticCall(
+                abi.encodeWithSignature("valueToRedeem()")
+            );
+            // Get the old `valueToRedeem` in mUSD.
+            uint256 oldValueToRedeem = abi.decode(result, (uint256));
+            // Check if the old `valueToRedeem` is greater than or equal to 0.5 mUSD, because
+            // it's a current minimum redeem amount with a "share" price greater or equal to 1 USD.
+            uint256 minRedeemValue = 0.5 * 10 ** 18; // >= 0.5 mUSD
+            if (oldValueToRedeem >= minRedeemValue) {
+                revert EUnprocessedRedeemRequests();
+            }
+        }
 
         // Check `pools20`.
         {
@@ -649,20 +656,6 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
                 }
                 _transferAllBalance(IERC20(tokenParams.pool), oldPoolKeeper);
             }
-        }
-
-        // Update `valueToRedeem`.
-        if (poolMap[USDT_ADDRESS].tokenType == TokenType.None) {
-            revert ENoUSDT();
-        }
-        {
-            bytes memory result = oldMoleculaPool.functionStaticCall(
-                abi.encodeWithSignature("valueToRedeem()")
-            );
-            // Get the old `valueToRedeem` in mUSD.
-            uint256 oldValueToRedeem = abi.decode(result, (uint256));
-            // Convert the value to the token amount in USDT.
-            poolMap[USDT_ADDRESS].valueToRedeem = oldValueToRedeem / 10 ** 12;
         }
 
         // Set Agents.
