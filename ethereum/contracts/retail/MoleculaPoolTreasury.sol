@@ -620,8 +620,8 @@ contract MoleculaPoolTreasury is Ownable, IMoleculaPool, ZeroValueChecker {
             );
             // Get the old `valueToRedeem` in mUSD.
             uint256 oldValueToRedeem = abi.decode(result, (uint256));
-            // Check whether the old `valueToRedeem` value is greater than or equal to 0.5 mUSD,
-            // As it's the current minimum redeem amount with the share price greater than or equal to 1 USD.
+            // Check whether the old `valueToRedeem` value is greater than or equal to 0.5 mUSD, 
+            // as it's the current minimum redeem amount with the share price greater than or equal to 1 USD.
             uint256 minRedeemValue = 0.5 * 10 ** 18; // >= 0.5 mUSD
             if (oldValueToRedeem >= minRedeemValue) {
                 revert EUnprocessedRedeemRequests();
